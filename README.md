@@ -1,19 +1,17 @@
 # Open-Meteo Maps
 
-[![codecov](https://codecov.io/gh/open-meteo/maps/graph/badge.svg?token=QRHSC0EGJ8)](https://codecov.io/gh/open-meteo/maps)
-[![Build](https://github.com/open-meteo/maps/actions/workflows/build.yml/badge.svg)](https://github.com/open-meteo/maps/actions/workflows/build.yml)
-[![GitHub license](https://img.shields.io/github/license/open-meteo/maps)](https://github.com/open-meteo/maps/blob/main/LICENSE)
-
-UI demo for the [Open-Meteo MapLibre/Mapbox protocol](https://github.com/open-meteo/mapbox-layer).
-
-![Open-Meteo Maps UI example](./static/example.png)
+Minimal Vite + TanStack React example for [Open-Meteo MapLibre/Mapbox protocol](https://github.com/open-meteo/mapbox-layer).
 
 ## About this Repository
 
-This is a simple client-side UI that loads OM files from [https://openmeteo.s3.amazonaws.com/](https://openmeteo.s3.amazonaws.com/index.html#data_spatial/) and renders them with MapLibre GL using the Open-Meteo MapLibre/Mapbox protocol.
-Weather tiles are fully rendered on the client using the data in the native model resolution.
+This is a minimal single-file React application that demonstrates how to use the Open-Meteo maps protocol with MapLibre GL JS. It includes:
 
-This is not the [Open-Meteo weather API](https://github.com/open-meteo/open-meteo).
+- **Map**: MapLibre GL JS map with Open-Meteo weather data overlay
+- **Domain Selector**: Choose from various weather models (DWD ICON, ECMWF, GFS, etc.)
+- **Variable Selector**: Select weather variables (temperature, wind, precipitation, etc.)
+- **Level Selector**: For pressure-level variables, select the altitude/pressure level
+
+All functionality is contained in a single `src/App.tsx` file for easy understanding and customization.
 
 ## Development
 
@@ -30,6 +28,14 @@ Build for production:
 npm run build
 npm run preview
 ```
+
+## Tech Stack
+
+- **React 19** - UI framework
+- **Vite 7** - Build tool
+- **TanStack Router** - Routing (available for extension)
+- **MapLibre GL JS** - Map rendering
+- **@openmeteo/mapbox-layer** - Open-Meteo protocol for weather data
 
 ## Issues & Contributing
 
