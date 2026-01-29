@@ -1,7 +1,15 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import type { RequestParameters } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
+import {
+  Map,
+  NavigationControl,
+  GeolocateControl,
+  Source,
+  Layer,
+} from '@vis.gl/react-maplibre';
+import type { MapRef } from '@vis.gl/react-maplibre';
 import { Protocol } from 'pmtiles';
 import {
   omProtocol,
@@ -107,6 +115,30 @@ const omSettings: OmProtocolSettings = {
   useSAB: true,
 };
 
+// Setup protocols once at module level (with HMR safety)
+const pmtilesProtocol = new Protocol({ metadata: true });
+try {
+  maplibregl.addProtocol(
+    'mapterhorn',
+    async (params: RequestParameters, abortController: AbortController) => {
+      const [z, x, y] = params.url.replace('mapterhorn://', '').split('/').map(Number);
+      const name = z <= 12 ? 'planet' : `6-${x >> (z - 6)}-${y >> (z - 6)}`;
+      const url = `pmtiles://https://mapterhorn.servert.ch/${name}.pmtiles/${z}/${x}/${y}.webp`;
+      return await pmtilesProtocol.tile({ ...params, url }, abortController);
+    }
+  );
+} catch {
+  // Protocol already registered (e.g., during HMR)
+}
+
+try {
+  maplibregl.addProtocol('om', (params: RequestParameters) =>
+    omProtocol(params, undefined, omSettings)
+  );
+} catch {
+  // Protocol already registered (e.g., during HMR)
+}
+
 // Extract level info from variable
 const extractLevelInfo = (variable: string): { level: string; unit: string } | null => {
   const match = variable.match(LEVEL_UNIT_REGEX);
@@ -127,11 +159,24 @@ const hasLevels = (variable: string): boolean => {
   return LEVEL_REGEX.test(variable);
 };
 
+// Fetch metadata for domain
+const fetchMetaData = async (domainValue: string): Promise<DomainMetaDataJson> => {
+  const uri = domainValue.startsWith('dwd_icon')
+    ? 'https://s3.servert.ch'
+    : 'https://map-tiles.open-meteo.com';
+
+  const response = await fetch(`${uri}/data_spatial/${domainValue}/latest.json`);
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.json();
+};
+
 export default function App() {
-  const mapContainer = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<maplibregl.Map | null>(null);
+  const mapRef = useRef<MapRef>(null);
 
   const [loading, setLoading] = useState(true);
+  const [mapStyle, setMapStyle] = useState<maplibregl.StyleSpecification | null>(null);
   const [domain, setDomain] = useState('dwd_icon');
   const [variable, setVariable] = useState('temperature_2m');
   const [metaJson, setMetaJson] = useState<DomainMetaDataJson | null>(null);
@@ -203,130 +248,37 @@ export default function App() {
     return [];
   }, [levelGroupsList, currentLevelGroup]);
 
-  // Fetch metadata for domain
-  const fetchMetaData = useCallback(async (domainValue: string): Promise<DomainMetaDataJson> => {
-    const uri = domainValue.startsWith('dwd_icon')
-      ? 'https://s3.servert.ch'
-      : 'https://map-tiles.open-meteo.com';
-
-    const response = await fetch(`${uri}/data_spatial/${domainValue}/latest.json`);
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    return response.json();
-  }, []);
-
-  // Update OM layer URL
-  const updateOMLayer = useCallback(() => {
-    const map = mapRef.current;
-    if (!map || !modelRun) return;
-
-    const source = map.getSource('omRasterSource') as maplibregl.RasterTileSource | undefined;
-    if (source) {
-      const omUrl = getOMUrl(domain, variable, modelRun, selectedTime);
-      source.setUrl('om://' + omUrl);
-    }
-  }, [domain, variable, modelRun, selectedTime]);
-
-  // Initialize map
+  // Initialize: fetch metadata and style
   useEffect(() => {
-    if (!mapContainer.current) return;
-
-    // Setup PMTiles protocol
-    const protocol = new Protocol({ metadata: true });
-    maplibregl.addProtocol(
-      'mapterhorn',
-      async (params: RequestParameters, abortController: AbortController) => {
-        const [z, x, y] = params.url.replace('mapterhorn://', '').split('/').map(Number);
-        const name = z <= 12 ? 'planet' : `6-${x >> (z - 6)}-${y >> (z - 6)}`;
-        const url = `pmtiles://https://mapterhorn.servert.ch/${name}.pmtiles/${z}/${x}/${y}.webp`;
-        return await protocol.tile({ ...params, url }, abortController);
-      }
-    );
-
-    // Setup OM protocol
-    maplibregl.addProtocol('om', (params: RequestParameters) =>
-      omProtocol(params, undefined, omSettings)
-    );
-
-    // Initialize map
-    const initMap = async () => {
+    const init = async () => {
       try {
-        // Fetch metadata first
+        // Fetch metadata
         const meta = await fetchMetaData(domain);
         setMetaJson(meta);
-        
-        const referenceTime = new Date(meta.reference_time);
-        setModelRun(referenceTime);
+        setModelRun(new Date(meta.reference_time));
 
         // Fetch style
         const styleResponse = await fetch(getStyleUrl());
         const style = await styleResponse.json();
+        setMapStyle(style);
 
-        // Get grid and center
-        const grid = GridFactory.create(selectedDomain.grid);
-        const center = grid.getCenter();
-
-        // Create map
-        const map = new maplibregl.Map({
-          container: mapContainer.current!,
-          style: style,
-          center: [center.lng, center.lat],
-          zoom: selectedDomain.grid.zoom || 3,
-          keyboard: false,
-          hash: true,
-          maxPitch: 85,
-        });
-
-        mapRef.current = map;
-
-        // Add navigation controls
-        map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }));
-        map.addControl(new maplibregl.GeolocateControl({
-          fitBoundsOptions: { maxZoom: 13.5 },
-          positionOptions: { enableHighAccuracy: true },
-          trackUserLocation: true,
-        }));
-
-        map.on('dataloading', () => {
-          updateCurrentBounds(map.getBounds());
-        });
-
-        map.on('load', () => {
-          const omUrl = getOMUrl(domain, variable, referenceTime, selectedTime);
-
-          // Add OM raster source and layer
-          map.addSource('omRasterSource', {
-            url: 'om://' + omUrl,
-            type: 'raster',
-            tileSize: 256,
-            maxzoom: 14,
-          });
-
-          map.addLayer(
-            {
-              id: 'omRasterLayer',
-              type: 'raster',
-              source: 'omRasterSource',
-              paint: { 'raster-opacity': 0.75 },
-            },
-            'waterway-tunnel'
-          );
-
-          setLoading(false);
-        });
+        setLoading(false);
       } catch (error) {
-        console.error('Failed to initialize map:', error);
+        console.error('Failed to initialize:', error);
         setLoading(false);
       }
     };
 
-    initMap();
-
-    return () => {
-      mapRef.current?.remove();
-    };
+    init();
   }, []); // Only run once on mount
+
+  // Handle data loading event to update bounds
+  const handleData = useCallback(() => {
+    const map = mapRef.current;
+    if (map) {
+      updateCurrentBounds(map.getBounds());
+    }
+  }, []);
 
   // Handle domain change
   const handleDomainChange = async (newDomain: string) => {
@@ -385,16 +337,23 @@ export default function App() {
     setVariable(newLevel);
   };
 
-  // Update map when variable/domain/time changes
-  useEffect(() => {
-    updateOMLayer();
-  }, [updateOMLayer]);
-
   // Get variable label
   const getVariableLabel = (value: string): string => {
     const option = variableOptions.find((v) => v.value === value);
     return option?.label || value;
   };
+
+  // Compute OM URL
+  const omUrl = modelRun
+    ? 'om://' + getOMUrl(domain, variable, modelRun, selectedTime)
+    : null;
+
+  // Memoize initial center from grid
+  const initialCenter = useMemo((): [number, number] => {
+    const grid = GridFactory.create(selectedDomain.grid);
+    const center = grid.getCenter();
+    return [center.lng, center.lat];
+  }, [selectedDomain.grid]);
 
   // Current levels info
   const levels = currentLevels();
@@ -404,7 +363,45 @@ export default function App() {
     <>
       <style>{styles}</style>
       <div className="map-container">
-        <div ref={mapContainer} style={{ width: '100%', height: '100%' }} />
+        {mapStyle && (
+          <Map
+            ref={mapRef}
+            mapStyle={mapStyle}
+            initialViewState={{
+              longitude: initialCenter[0],
+              latitude: initialCenter[1],
+              zoom: selectedDomain.grid.zoom || 3,
+            }}
+            keyboard={false}
+            hash={true}
+            maxPitch={85}
+            style={{ width: '100%', height: '100%' }}
+            onData={handleData}
+          >
+            <NavigationControl visualizePitch={true} />
+            <GeolocateControl
+              fitBoundsOptions={{ maxZoom: 13.5 }}
+              positionOptions={{ enableHighAccuracy: true }}
+              trackUserLocation={true}
+            />
+            {omUrl && (
+              <Source
+                id="omRasterSource"
+                type="raster"
+                url={omUrl}
+                tileSize={256}
+                maxzoom={14}
+              >
+                <Layer
+                  id="omRasterLayer"
+                  type="raster"
+                  paint={{ 'raster-opacity': 0.75 }}
+                  beforeId="waterway-tunnel"
+                />
+              </Source>
+            )}
+          </Map>
+        )}
         
         {loading && <div className="loading">Loading...</div>}
         

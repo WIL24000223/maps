@@ -20,6 +20,7 @@
 	"dependencies": {
 		"@openmeteo/mapbox-layer": "0.0.13",
 		"@tanstack/react-router": "^1.120.3",
+		"@vis.gl/react-maplibre": "^8.1.0",
 		"maplibre-gl": "^5.15.0",
 		"pmtiles": "^4.3.0",
 		"react": "^19.1.0",
